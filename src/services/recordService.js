@@ -54,6 +54,14 @@ async function startRecording({ url, quality = 'best', maxDuration = 0, title })
   ];
 
   const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  
+  // Handle spawn errors (e.g., yt-dlp not installed)
+  proc.on('error', (err) => {
+    if (err.code === 'ENOENT') {
+      console.error('❌ yt-dlp is not installed. Please install it: https://github.com/yt-dlp/yt-dlp#installation');
+    }
+  });
+  
   try { proc.unref(); } catch (e) { /* ignore */ }
 
   const rec = {

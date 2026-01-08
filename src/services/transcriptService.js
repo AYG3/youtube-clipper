@@ -149,7 +149,11 @@ async function fetchTranscriptFromYoutube(videoId, url) {
     });
     
     proc.on('error', (err) => {
-      reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
+      if (err.code === 'ENOENT') {
+        reject(new Error('yt-dlp is not installed. Please install it: https://github.com/yt-dlp/yt-dlp#installation'));
+      } else {
+        reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
+      }
     });
   });
 }

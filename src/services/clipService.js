@@ -229,8 +229,17 @@ async function downloadClip({
     proc.on('error', (err) => {
       console.error('yt-dlp spawn error:', err);
       const clip = state.activeClips.get(clipId);
-      if (clip) { clip.message = 'Error'; }
-      reject(err);
+      
+      // Provide helpful error message if yt-dlp is not installed
+      if (err.code === 'ENOENT') {
+        const installMsg = 'yt-dlp is not installed. Please install it: https://github.com/yt-dlp/yt-dlp#installation';
+        console.error('❌', installMsg);
+        if (clip) { clip.message = 'yt-dlp not installed'; }
+        reject(new Error(installMsg));
+      } else {
+        if (clip) { clip.message = 'Error'; }
+        reject(err);
+      }
     });
   });
 }

@@ -2,6 +2,8 @@
 
 A simple Node.js application that allows you to download specific segments from YouTube videos with advanced transcript search capabilities.
 
+> **⚠️ IMPORTANT:** This application requires `yt-dlp` and `ffmpeg` to be installed on your system BEFORE running `npm install`. See [Prerequisites](#prerequisites) section below.
+
 ## Features
 
 - 🎬 Download clips from any YouTube video
