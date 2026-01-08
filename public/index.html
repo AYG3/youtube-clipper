@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Clipper</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 YouTube Clipper</h1>
+            <p>Download specific segments from YouTube videos</p>
+        </header>
+
+        <div class="card">
+            <div class="form-group">
+                <label for="youtubeUrl">YouTube URL</label>
+                <input 
+                    type="text" 
+                    id="youtubeUrl" 
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    autocomplete="off"
+                    onchange=""
+                >
+                <button id="loadVideoBtn" class="btn-secondary">Load Video</button>
+            </div>
+
+            <div id="videoPreview" class="video-preview hidden">
+                <div class="video-player-container">
+                    <div id="youtubePlayer"></div>
+                </div>
+                <div class="video-info">
+                    <h3 id="videoTitle"></h3>
+                    <p id="videoDuration"></p>
+                </div>
+            </div>
+
+            <div id="clipControls" class="clip-controls hidden">
+                <div class="form-group">
+                    <label for="startTime">Start Time (seconds or MM:SS)</label>
+                    <div class="time-input-group">
+                        <input 
+                            type="text" 
+                            id="startTime" 
+                            value="0" 
+                            placeholder="0 or 0:00"
+                        >
+                        <input 
+                            type="range" 
+                            id="startSlider" 
+                            min="0" 
+                            max="100" 
+                            value="0" 
+                            step="0.1"
+                            class="slider"
+                        >
+                        <button id="pinStartBtn" class="btn-secondary" style="padding: 8px 12px; font-size: 0.9rem;">📌</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="endTime">End Time (seconds or MM:SS)</label>
+                    <div class="time-input-group">
+                        <input 
+                            type="text" 
+                            id="endTime" 
+                            value="10" 
+                            placeholder="10 or 0:10"
+                        >
+                        <input 
+                            type="range" 
+                            id="endSlider" 
+                            min="0" 
+                            max="100" 
+                            value="10" 
+                            step="0.1"
+                            class="slider"
+                        >
+                    </div>
+                </div>
+
+                <div class="clip-duration">
+                    <strong>Clip Duration:</strong> <span id="clipDuration">10s</span>
+                </div>
+
+                <!-- Transcript Search Container -->
+                <div id="transcriptSearchContainer" class="card hidden"></div>
+
+                <div class="form-group quality-group">
+                    <label for="qualitySelect">Quality</label>
+                    <div class="select-wrapper">
+                        <select id="qualitySelect" class="styled-select" aria-label="Choose video quality">
+                        <option value="best">Best (auto)</option>
+                        <option value="2160">4K (2160p)</option>
+                        <option value="1440">1440p</option>
+                        <option value="1080">1080p</option>
+                        <option value="720">720p</option>
+                        <option value="480">480p</option>
+                        <option value="360">360p</option>
+                        <option value="audio">Audio only (M4A)</option>
+                        </select>
+                        <div class="select-notice" aria-hidden="true">Recommended: Best</div>
+                    </div>
+                </div>
+
+                <div class="download-controls">
+                    <label class="small"><input type="checkbox" id="backgroundCheckbox"> Background download (continue after disconnect)</label>
+                    <button id="downloadBtn" class="btn-primary">
+                        <span class="btn-text">Download Clip</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                    <button id="resumeBtn" class="btn-secondary hidden">Resume</button>
+                    <button id="viewLogBtn" class="btn-tertiary hidden">View log</button>
+                    <div id="clipResumeStatus" class="small muted"> </div>
+                    <pre id="clipLog" class="clip-log hidden" aria-hidden="true"></pre>
+                </div>
+                <div id="qualityBadge" class="quality-badge">Best</div>
+            </div>
+
+            <div id="recordControls" class="record-controls hidden">
+                <div class="form-group">
+                    <label>Live Recording</label>
+                    <div class="record-buttons">
+                        <button id="startRecordBtn" class="btn-secondary" disabled>Start Recording</button>
+                        <button id="stopRecordBtn" class="btn-danger" disabled>Stop Recording</button>
+                    </div>
+                </div>
+                <div id="recordStatus" class="small muted">No active recording</div>
+                <div id="recordingsList" class="recordings-list"></div>
+            </div>
+
+            <!-- Clip from recording modal/section -->
+            <div id="clipFromRecordingSection" class="clip-from-recording-section hidden">
+                <h4>Save Clip from Recording</h4>
+                <div class="form-group">
+                    <label for="clipRecordingSelect">Select Recording</label>
+                    <select id="clipRecordingSelect" class="styled-select"></select>
+                </div>
+                <div class="form-group">
+                    <label for="clipStartTime">Clip Start (seconds or MM:SS)</label>
+                    <input type="text" id="clipStartTime" value="0" placeholder="0 or 0:00">
+                </div>
+                <div class="form-group">
+                    <label for="clipEndTime">Clip End (seconds or MM:SS)</label>
+                    <input type="text" id="clipEndTime" value="30" placeholder="30 or 0:30">
+                </div>
+                <button id="saveClipFromRecordingBtn" class="btn-primary">Save Clip</button>
+            </div>
+
+            <div id="progressContainer" class="progress-container hidden">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div id="progressText">0%</div>
+            </div>
+
+            <div id="status" class="status hidden"></div>
+        </div>
+
+        
+
+        <footer>
+            <p>⚠️ Make sure FFmpeg and yt-dlp are installed on your system</p>
+            <p>Install with: <code>brew install ffmpeg yt-dlp</code> (macOS)</p>
+            <p class="note">💡 CORS warnings in browser console from YouTube ads are normal and can be ignored</p>
+        </footer>
+    </div>
+
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="components/transcript-search.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
