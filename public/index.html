@@ -2,9 +2,32 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Clipper</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    
+    <!-- Primary Meta Tags -->
+    <title>YouTube Clipper - Download Video Segments</title>
+    <meta name="title" content="YouTube Clipper - Download Video Segments">
+    <meta name="description" content="Download specific segments from YouTube videos with transcript search and AI-powered semantic search">
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#002366">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="YT Clipper">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    
+    <!-- Stylesheet -->
     <link rel="stylesheet" href="styles.css">
+    
+    <!-- Browser Compatibility Polyfills -->
+    <script crossorigin="anonymous" src="https://polyfill.io/v3/polyfill.min.js?features=fetch%2CPromise%2CWebSocket%2CArray.prototype.includes"></script>
 </head>
 <body>
     <div class="container">
@@ -15,7 +38,15 @@
 
         <div class="card">
             <div class="form-group">
-                <label for="youtubeUrl">YouTube URL</label>
+                <div class="label-with-history">
+                    <label for="youtubeUrl">YouTube URL</label>
+                    <div class="history-dropdown-container">
+                        <button id="historyToggleBtn" class="btn-history" title="View recent videos">
+                            📋 History
+                        </button>
+                        <div id="historyDropdown" class="history-dropdown hidden"></div>
+                    </div>
+                </div>
                 <input 
                     type="text" 
                     id="youtubeUrl" 
@@ -23,7 +54,10 @@
                     autocomplete="off"
                     onchange=""
                 >
-                <button id="loadVideoBtn" class="btn-secondary">Load Video</button>
+                <div class="button-group">
+                    <button id="loadVideoBtn" class="btn-secondary">Load Video</button>
+                    <button id="clearVideoBtn" class="btn-clear" title="Clear video and start fresh">🗑️ Clear</button>
+                </div>
             </div>
 
             <div id="videoPreview" class="video-preview hidden">

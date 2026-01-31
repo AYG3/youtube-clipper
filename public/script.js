@@ -10,9 +10,142 @@ let isUserDraggingEnd = false;
 let lastEndSliderInteraction = 0;
 let transcriptSearch = null;
 
+// ========== Video History Management Module ==========
+const VideoHistory = {
+    STORAGE_KEY: 'youtube_clipper_history',
+    MAX_HISTORY_ITEMS: 3,
+
+    // Get history from localStorage
+    getHistory() {
+        try {
+            const history = localStorage.getItem(this.STORAGE_KEY);
+            return history ? JSON.parse(history) : [];
+        } catch (error) {
+            console.error('Error reading history:', error);
+            return [];
+        }
+    },
+
+    // Save history to localStorage
+    saveHistory(history) {
+        try {
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify(history));
+        } catch (error) {
+            console.error('Error saving history:', error);
+        }
+    },
+
+    // Add video to history
+    addVideo(videoData) {
+        if (!videoData || !videoData.url || !videoData.videoId) return;
+
+        let history = this.getHistory();
+        
+        // Remove duplicate if exists
+        history = history.filter(item => item.videoId !== videoData.videoId);
+        
+        // Add to beginning
+        history.unshift({
+            url: videoData.url,
+            videoId: videoData.videoId,
+            title: videoData.title || 'Untitled Video',
+            duration: videoData.duration || 0,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Keep only last MAX_HISTORY_ITEMS
+        history = history.slice(0, this.MAX_HISTORY_ITEMS);
+        
+        this.saveHistory(history);
+        this.renderHistoryDropdown();
+    },
+
+    // Clear all history
+    clearHistory() {
+        this.saveHistory([]);
+        this.renderHistoryDropdown();
+    },
+
+    // Render history dropdown
+    renderHistoryDropdown() {
+        const dropdown = document.getElementById('historyDropdown');
+        const history = this.getHistory();
+
+        if (history.length === 0) {
+            dropdown.innerHTML = '<div class="history-empty">No recent videos</div>';
+            return;
+        }
+
+        dropdown.innerHTML = history.map((item, index) => `
+            <div class="history-item" data-url="${item.url}" data-index="${index}">
+                <div class="history-item-title">${this.truncateTitle(item.title, 40)}</div>
+                <div class="history-item-meta">
+                    ${this.formatDuration(item.duration)} • ${this.timeAgo(item.timestamp)}
+                </div>
+            </div>
+        `).join('');
+
+        // Add click handlers
+        dropdown.querySelectorAll('.history-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const url = item.getAttribute('data-url');
+                this.loadFromHistory(url);
+            });
+        });
+    },
+
+    // Load video from history
+    loadFromHistory(url) {
+        if (!url) return;
+        
+        // Set URL and trigger load
+        youtubeUrlInput.value = url;
+        document.getElementById('historyDropdown').classList.add('hidden');
+        loadVideoBtn.click();
+    },
+
+    // Helper: Truncate title
+    truncateTitle(title, maxLength) {
+        if (title.length <= maxLength) return title;
+        return title.substring(0, maxLength) + '...';
+    },
+
+    // Helper: Format duration
+    formatDuration(seconds) {
+        if (!seconds || seconds === 0) return '0:00';
+        const hrs = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        
+        if (hrs > 0) {
+            return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    },
+
+    // Helper: Time ago
+    timeAgo(timestamp) {
+        const now = new Date();
+        const past = new Date(timestamp);
+        const diffMs = now - past;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return past.toLocaleDateString();
+    }
+};
+
 // DOM elements
 const youtubeUrlInput = document.getElementById('youtubeUrl');
 const loadVideoBtn = document.getElementById('loadVideoBtn');
+const clearVideoBtn = document.getElementById('clearVideoBtn');
+const historyToggleBtn = document.getElementById('historyToggleBtn');
+const historyDropdown = document.getElementById('historyDropdown');
 const videoPreview = document.getElementById('videoPreview');
 const clipControls = document.getElementById('clipControls');
 const youtubePlayer = document.getElementById('youtubePlayer');
@@ -90,6 +223,74 @@ function showStatus(message, type = 'info') {
 // Hide status message
 function hideStatus() {
     status.classList.add('hidden');
+}
+
+// Clear video and reset state
+function clearVideo() {
+    // Clear input
+    youtubeUrlInput.value = '';
+    
+    // Hide UI elements
+    videoPreview.classList.add('hidden');
+    clipControls.classList.add('hidden');
+    document.getElementById('transcriptSearchContainer')?.classList.add('hidden');
+    document.getElementById('recordControls')?.classList.add('hidden');
+    hideStatus();
+    
+    // Destroy player
+    if (player) {
+        try {
+            player.destroy();
+        } catch (e) {
+            console.log('Error destroying player:', e);
+        }
+        player = null;
+    }
+    
+    // Clear player container
+    youtubePlayer.innerHTML = '';
+    
+    // Reset transcript search
+    if (transcriptSearch) {
+        transcriptSearch = null;
+    }
+    
+    // Reset video info and duration
+    videoInfo = null;
+    videoDuration = 0;
+    
+    // Reset sliders
+    startSlider.value = 0;
+    endSlider.value = 10;
+    startSlider.max = 100;
+    endSlider.max = 100;
+    
+    // Reset time inputs
+    startTime.value = '0';
+    endTime.value = '10';
+    clipDuration.textContent = '10s';
+    
+    // Reset pin state
+    isStartPinned = false;
+    pinStartBtn.textContent = '📌';
+    pinStartBtn.classList.remove('pinned');
+    
+    // Clear recording state if any
+    if (currentRecordingId) {
+        currentRecordingId = null;
+    }
+    if (recordingPollInterval) {
+        clearInterval(recordingPollInterval);
+        recordingPollInterval = null;
+    }
+    
+    // Clear sync interval
+    if (syncInterval) {
+        clearInterval(syncInterval);
+        syncInterval = null;
+    }
+    
+    console.log('Video cleared successfully');
 }
 
 // Update clip duration display
@@ -213,6 +414,14 @@ loadVideoBtn.addEventListener('click', async () => {
         updateClipDuration();
         showStatus('Video loaded successfully!', 'success');
         setTimeout(hideStatus, 3000);
+        
+        // Add to history
+        VideoHistory.addVideo({
+            url: url,
+            videoId: data.videoId,
+            title: data.title,
+            duration: data.duration
+        });
 
         // Initialize transcript search for non-live videos
         if (!data.isLive && window.TranscriptSearch) {
@@ -861,4 +1070,45 @@ if (resumeBtn) resumeBtn.addEventListener('click', async () => {
     } catch (e) {
         showStatus('Resume failed: ' + e.message, 'error');
     } finally { resumeBtn.disabled = false; }
+});
+
+// ========== Clear Video Button ==========
+clearVideoBtn.addEventListener('click', () => {
+    if (videoInfo) {
+        // Confirm if video is loaded
+        if (confirm('Clear the current video and start fresh?')) {
+            clearVideo();
+        }
+    } else {
+        // Just clear input if no video loaded
+        clearVideo();
+    }
+});
+
+// ========== History Dropdown Toggle ==========
+historyToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    historyDropdown.classList.toggle('hidden');
+    
+    // Render history when opening
+    if (!historyDropdown.classList.contains('hidden')) {
+        VideoHistory.renderHistoryDropdown();
+    }
+});
+
+// Close history dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.history-dropdown-container')) {
+        historyDropdown.classList.add('hidden');
+    }
+});
+
+// Prevent dropdown from closing when clicking inside it
+historyDropdown.addEventListener('click', (e) => {
+    e.stopPropagation();
+});
+
+// ========== Initialize History on Page Load ==========
+document.addEventListener('DOMContentLoaded', () => {
+    VideoHistory.renderHistoryDropdown();
 });

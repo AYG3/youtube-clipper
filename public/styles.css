@@ -15,6 +15,7 @@ body {
 .container {
     max-width: 1000px;
     margin: 0 auto;
+    padding: 0 15px;
 }
 
 header {
@@ -164,6 +165,18 @@ header p {
     border-color: #D50000;
 }
 
+/* Button group for Load and Clear buttons */
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.button-group .btn-secondary {
+    flex: 1;
+    margin-top: 0;
+}
+
 .btn-secondary {
     width: 100%;
     padding: 12px;
@@ -188,6 +201,135 @@ header p {
     background: #ccc;
     cursor: not-allowed;
     transform: none;
+}
+
+/* Clear button styling */
+.btn-clear {
+    padding: 12px;
+    background: #666;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    flex: 0 0 auto;
+    min-width: 120px;
+}
+
+.btn-clear:hover {
+    background: #444;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.btn-clear:active {
+    transform: translateY(0);
+}
+
+/* Label with history container */
+.label-with-history {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.label-with-history label {
+    margin-bottom: 0;
+}
+
+/* History dropdown container */
+.history-dropdown-container {
+    position: relative;
+}
+
+/* History button */
+.btn-history {
+    padding: 6px 12px;
+    background: #f0f0f0;
+    color: #333;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.btn-history:hover {
+    background: #e0e0e0;
+    border-color: #ccc;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.btn-history:active {
+    transform: translateY(0);
+}
+
+/* History dropdown */
+.history-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 320px;
+    max-width: 400px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-height: 350px;
+    overflow-y: auto;
+}
+
+.history-dropdown.hidden {
+    display: none;
+}
+
+/* History empty state */
+.history-empty {
+    padding: 20px;
+    text-align: center;
+    color: #999;
+    font-size: 0.9rem;
+}
+
+/* History item */
+.history-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.history-item:last-child {
+    border-bottom: none;
+}
+
+.history-item:hover {
+    background: #f8f9fa;
+}
+
+.history-item-title {
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 4px;
+    font-size: 0.9rem;
+    line-height: 1.3;
+}
+
+.history-item-meta {
+    font-size: 0.8rem;
+    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .video-preview {
@@ -733,5 +875,159 @@ footer .note {
     .video-preview img {
         width: 100%;
         height: auto;
+    }
+}
+
+/* Enhanced Mobile Responsive Styles */
+@media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+    
+    header h1 {
+        font-size: 2rem;
+    }
+    
+    header p {
+        font-size: 1rem;
+    }
+    
+    .card {
+        padding: 20px;
+        margin: 15px 0;
+        border-radius: 12px;
+    }
+    
+    /* Button group stacking on mobile */
+    .button-group {
+        flex-direction: column;
+    }
+    
+    .button-group .btn-secondary,
+    .btn-clear {
+        width: 100%;
+        min-width: auto;
+    }
+    
+    /* History dropdown on mobile */
+    .history-dropdown {
+        min-width: 280px;
+        max-width: calc(100vw - 40px);
+        right: -10px;
+    }
+    
+    .label-with-history {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .btn-history {
+        font-size: 0.8rem;
+        padding: 5px 10px;
+    }
+    
+    /* Better touch targets */
+    .btn-primary,
+    .btn-secondary {
+        padding: 16px;
+        min-height: 48px;
+        font-size: 1rem;
+        touch-action: manipulation;
+    }
+    
+    .btn-danger {
+        min-height: 48px;
+        touch-action: manipulation;
+    }
+    
+    /* Thicker sliders for touch */
+    .slider {
+        height: 12px;
+    }
+    
+    .slider::-webkit-slider-thumb {
+        width: 28px;
+        height: 28px;
+    }
+    
+    .slider::-moz-range-thumb {
+        width: 28px;
+        height: 28px;
+    }
+    
+    /* Form inputs */
+    .form-group input[type="text"] {
+        padding: 14px;
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+    
+    .styled-select {
+        padding: 14px 40px 14px 14px;
+        font-size: 16px; /* Prevents zoom on iOS */
+        min-width: 100%;
+    }
+    
+    /* Time input group stacking */
+    .time-input-group {
+        flex-wrap: wrap;
+    }
+    
+    .time-input-group input[type="text"] {
+        min-width: 80px;
+    }
+    
+    .time-input-group .btn-secondary {
+        width: 48px;
+        padding: 12px;
+    }
+}
+
+/* Tablet Landscape */
+@media (min-width: 601px) and (max-width: 1024px) {
+    .container {
+        padding: 0 20px;
+    }
+    
+    header h1 {
+        font-size: 2.2rem;
+    }
+    
+    .card {
+        padding: 25px;
+    }
+}
+
+/* Small phones */
+@media (max-width: 375px) {
+    header h1 {
+        font-size: 1.75rem;
+    }
+    
+    .card {
+        padding: 15px;
+    }
+    
+    .btn-primary,
+    .btn-secondary {
+        font-size: 0.9rem;
+    }
+}
+
+/* Landscape orientation */
+@media (max-height: 500px) and (orientation: landscape) {
+    body {
+        padding: 10px;
+    }
+    
+    header {
+        margin-bottom: 15px;
+    }
+    
+    header h1 {
+        font-size: 1.5rem;
+    }
+    
+    .card {
+        padding: 15px;
     }
 }

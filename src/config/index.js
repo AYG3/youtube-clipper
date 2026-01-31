@@ -4,7 +4,7 @@
 const path = require('path');
 
 module.exports = {
-  PORT: process.env.PORT || 3000,
+  PORT: process.env.PORT || 3005,
   TEMP_DIR: path.join(__dirname, '../../temp'),
   
   // Timeouts (ms)
