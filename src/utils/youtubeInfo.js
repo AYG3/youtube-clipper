@@ -18,8 +18,9 @@ async function fetchVideoInfo(url) {
   try {
     const ytdlpArgs = [
       '-j',
-      '--extractor-args', 'youtube:player_client=ios,web',
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      '--extractor-args', 'youtube:player_client=android,tv,web;po_token=web+https://www.youtube.com',
+      '--user-agent', 'com.google.android.youtube/19.09.36 (Linux; U; Android 13) gzip',
+      '--no-check-certificates',
       url
     ];
     

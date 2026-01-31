@@ -13,10 +13,11 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 # Configure yt-dlp to use Node.js runtime and set better user agent
 RUN mkdir -p /root/.config/yt-dlp && \
-    echo '--extractor-args "youtube:player_client=ios,web"' > /root/.config/yt-dlp/config && \
-    echo '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"' >> /root/.config/yt-dlp/config && \
+    echo '--extractor-args "youtube:player_client=android,tv,web;po_token=web+https://www.youtube.com"' > /root/.config/yt-dlp/config && \
+    echo '--user-agent "com.google.android.youtube/19.09.36 (Linux; U; Android 13) gzip"' >> /root/.config/yt-dlp/config && \
     echo '--add-header "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"' >> /root/.config/yt-dlp/config && \
-    echo '--add-header "Accept-Language:en-us,en;q=0.5"' >> /root/.config/yt-dlp/config
+    echo '--add-header "Accept-Language:en-us,en;q=0.5"' >> /root/.config/yt-dlp/config && \
+    echo '--no-check-certificates' >> /root/.config/yt-dlp/config
 
 # Set NODE_PATH for yt-dlp to find Node.js
 ENV NODE_PATH=/usr/local/bin/node
