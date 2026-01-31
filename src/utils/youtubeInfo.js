@@ -16,7 +16,17 @@ async function fetchVideoInfo(url) {
   
   // Try yt-dlp first (more reliable and has better live detection)
   try {
-    const { stdout } = await execFileAsync('yt-dlp', ['-j', url], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
+    const ytdlpArgs = [
+      '-j',
+      '--extractor-args', 'youtube:player_client=ios,web',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      url
+    ];
+    
+    const { stdout } = await execFileAsync('yt-dlp', ytdlpArgs, { 
+      timeout: 30000, 
+      maxBuffer: 10 * 1024 * 1024 
+    });
     const meta = JSON.parse(stdout);
 
     // yt-dlp provides:

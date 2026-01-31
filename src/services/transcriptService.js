@@ -82,6 +82,8 @@ async function fetchTranscriptFromYoutube(videoId, url) {
       '--sub-langs', 'en',
       '--sub-format', 'json3',
       '--skip-download',
+      '--extractor-args', 'youtube:player_client=ios,web',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       '--output', path.join(tempDir, `${videoId}.%(ext)s`),
       url
     ];

@@ -44,6 +44,8 @@ async function startRecording({ url, quality = 'best', maxDuration = 0, title })
     '-f', chosenFormat,
     '--hls-use-mpegts',
     '--hls-prefer-ffmpeg',
+    '--extractor-args', 'youtube:player_client=ios,web',
+    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     '--retries', '10',
     '--fragment-retries', '10',
     '--no-overwrites',
