@@ -35,6 +35,76 @@ header p {
     opacity: 0.95;
 }
 
+/* Notice Banner */
+.notice-banner {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border: 1px solid #ffc107;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 0 0 20px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.2);
+    animation: slideDown 0.3s ease-out;
+}
+
+.notice-banner.hidden {
+    display: none;
+}
+
+.notice-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.notice-content {
+    flex: 1;
+    color: #856404;
+    line-height: 1.6;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.notice-content strong {
+    color: #664d03;
+}
+
+.btn-dismiss {
+    background: none;
+    border: none;
+    color: #856404;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.btn-dismiss:hover {
+    background: rgba(133, 100, 4, 0.1);
+    color: #664d03;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 .card {
     background: white;
     border-radius: 16px;

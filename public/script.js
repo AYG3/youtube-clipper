@@ -442,7 +442,19 @@ loadVideoBtn.addEventListener('click', async () => {
 
     } catch (error) {
         console.error('Error loading video:', error);
-        showStatus(error.message, 'error');
+        
+        // Provide context-aware error messages
+        let errorMsg = error.message || 'Failed to load video';
+        
+        if (errorMsg.includes('rate limit') || errorMsg.includes('429')) {
+            errorMsg += ' Please wait a few minutes and try again, or try a different video.';
+        } else if (errorMsg.includes('bot') || errorMsg.includes('Sign in')) {
+            errorMsg += ' This is common on cloud hosting. Try refreshing the page or waiting a few minutes.';
+        } else if (errorMsg.includes('DNS') || errorMsg.includes('ENOTFOUND')) {
+            errorMsg += ' Check your internet connection or try again later.';
+        }
+        
+        showStatus(errorMsg, 'error');
     } finally {
         loadVideoBtn.disabled = false;
         loadVideoBtn.textContent = 'Load Video';
@@ -1111,4 +1123,26 @@ historyDropdown.addEventListener('click', (e) => {
 // ========== Initialize History on Page Load ==========
 document.addEventListener('DOMContentLoaded', () => {
     VideoHistory.renderHistoryDropdown();
+    
+    // Show hosting notice if on cloud platform (not localhost)
+    const isCloudHosting = !window.location.hostname.includes('localhost') && 
+                          !window.location.hostname.includes('127.0.0.1');
+    
+    if (isCloudHosting) {
+        const hostingNotice = document.getElementById('hostingNotice');
+        const dismissBtn = document.getElementById('dismissNoticeBtn');
+        
+        // Check if user has dismissed the notice before
+        const noticeDismissed = localStorage.getItem('hostingNoticeDismissed');
+        
+        if (!noticeDismissed) {
+            hostingNotice.classList.remove('hidden');
+        }
+        
+        // Handle dismiss button
+        dismissBtn.addEventListener('click', () => {
+            hostingNotice.classList.add('hidden');
+            localStorage.setItem('hostingNoticeDismissed', 'true');
+        });
+    }
 });
