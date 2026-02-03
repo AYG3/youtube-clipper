@@ -63,9 +63,8 @@ async function downloadClip({
     '-f', chosenFormat,
     '--download-sections', `*${startSeconds}-${endSeconds}`,
     '--force-keyframes-at-cuts',
-    // YouTube bot prevention - using Android TV client
-    '--extractor-args', 'youtube:player_client=android,tv,web;po_token=web+https://www.youtube.com',
-    '--user-agent', 'com.google.android.youtube/19.09.36 (Linux; U; Android 13) gzip',
+    // YouTube bot prevention - using iOS client (more reliable)
+    '--extractor-args', 'youtube:player_client=ios,web',
     '--no-check-certificates',
     // Enhanced retry configuration for better resume reliability
     '--retries', '15',                    // Increased from 10
