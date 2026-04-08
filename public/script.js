@@ -215,7 +215,9 @@ function formatTime(seconds) {
 
 // Show status message
 function showStatus(message, type = 'info') {
-    status.textContent = message;
+    // Support multi-line messages by converting newlines to <br>
+    const formattedMessage = message.replace(/\n/g, '<br>');
+    status.innerHTML = formattedMessage;
     status.className = `status ${type}`;
     status.classList.remove('hidden');
 }
@@ -651,7 +653,20 @@ downloadBtn.addEventListener('click', async () => {
 
         if (!response.ok) {
             const data = await response.json().catch(() => ({ error: 'Unknown error' }));
-            throw new Error(data.error || 'Failed to clip video');
+            
+            // Enhanced error message for network issues
+            let errorMsg = data.error || 'Failed to clip video';
+            
+            // Add user-friendly context based on error code
+            if (response.status === 503 || data.code === 'NETWORK_ERROR') {
+                errorMsg = '🌐 Network Error: ' + errorMsg + '\n\nPlease check your internet connection and try again.';
+            } else if (response.status === 429) {
+                errorMsg = '⏱️ Rate Limited: ' + errorMsg + '\n\nPlease wait a few minutes before trying again.';
+            } else if (data.retryable) {
+                errorMsg = errorMsg + '\n\n(This error may be temporary - you can try again)';
+            }
+            
+            throw new Error(errorMsg);
         }
 
         // If background download was requested, server returns JSON with id and status

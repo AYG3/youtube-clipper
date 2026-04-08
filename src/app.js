@@ -11,6 +11,7 @@ const clipRoutes = require('./routes/clipRoutes');
 const recordRoutes = require('./routes/recordRoutes');
 const configRoutes = require('./routes/configRoutes');
 const transcriptRoutes = require('./routes/transcriptRoutes');
+const healthRoutes = require('./routes/healthRoutes');
 const { cleanupStalePartials } = require('./utils/file');
 
 const app = express();
@@ -95,6 +96,7 @@ app.get('/api/diagnostic', async (req, res) => {
 });
 
 // Routes
+app.use('/api/health', healthRoutes);
 app.use('/api', videoRoutes);
 app.use('/api/clip', clipRoutes);
 app.use('/api/record', recordRoutes);

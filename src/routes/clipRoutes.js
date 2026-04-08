@@ -150,7 +150,21 @@ router.post('/', async (req, res) => {
       console.log('Preserving failed/partial output file for resume/debug:', outputPath);
     }
 
-    res.status(500).json({ error: 'Failed to process video clip: ' + error.message });
+    // Determine appropriate HTTP status based on error type
+    let statusCode = 500;
+    if (error.code === 'NETWORK_ERROR' || error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+      statusCode = 503; // Service Unavailable (network issue)
+    } else if (error.message?.includes('rate limit') || error.message?.includes('429')) {
+      statusCode = 429; // Too Many Requests
+    } else if (error.message?.includes('Invalid') || error.message?.includes('validation')) {
+      statusCode = 400; // Bad Request
+    }
+
+    res.status(statusCode).json({ 
+      error: 'Failed to process video clip: ' + error.message,
+      code: error.code || 'UNKNOWN_ERROR',
+      retryable: statusCode === 503 || statusCode === 429
+    });
   }
 });
 

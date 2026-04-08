@@ -6,3 +6,10 @@ downloads/
 temp/
 .DS_Store
 .env
+src/websocket.js
+NETWORK_TROUBLESHOOTING.md
+NETWORK_FIX_SUMMARY.md
+.gitignore
+1775690004292-player-script.js
+*1775*
+*.md

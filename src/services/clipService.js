@@ -63,14 +63,15 @@ async function downloadClip({
     '-f', chosenFormat,
     '--download-sections', `*${startSeconds}-${endSeconds}`,
     '--force-keyframes-at-cuts',
-    // YouTube bot prevention - using iOS client (more reliable)
-    '--extractor-args', 'youtube:player_client=ios,web',
+    // Don't restrict player_client - let yt-dlp auto-select best client for downloads
+    // (web-only restriction causes "format not available" errors with --download-sections)
     '--no-check-certificates',
-    // Enhanced retry configuration for better resume reliability
-    '--retries', '15',                    // Increased from 10
-    '--fragment-retries', '20',           // Increased from 10 for fragment failures
-    '--retry-sleep', '3',                 // Faster retry (was 5s)
-    '--file-access-retries', '5',         // New: retry file system operations
+    // Enhanced network reliability configuration
+    '--socket-timeout', '30',             // 30s socket timeout for slow networks
+    '--retries', '15',                    // Increased retries for reliability
+    '--fragment-retries', '20',           // Retry fragment downloads
+    '--retry-sleep', '5',                 // 5s between retries (allows network recovery)
+    '--file-access-retries', '5',         // Retry file system operations
     '--continue',                          // Resume partial downloads
     '--no-overwrites',                     // Don't restart complete downloads
     '--concurrent-fragments', '3',         // Parallel fragment downloads for speed
@@ -205,8 +206,9 @@ async function downloadClip({
         console.error(msg);
         
         // Enhanced error logging with resume context
+        let logPath;
         try {
-          const logPath = outputPath + '.yt-dlp.log';
+          logPath = outputPath + '.yt-dlp.log';
           const partialSize = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
           const header = [
             `Exit code: ${code} signal: ${signal}`,
@@ -225,7 +227,24 @@ async function downloadClip({
           const sz = fs.statSync(outputPath).size;
           console.log(`Preserving partial file for resume: ${(sz/(1024*1024)).toFixed(2)} MB at ${outputPath}`);
         }
-        reject(new Error(msg));
+        
+        // Detect specific error types and provide actionable messages
+        let errorMsg = msg;
+        if (stderrBuf.includes('Requested format is not available')) {
+          errorMsg = 'Video format not available. YouTube may have changed their formats. Try a different quality setting or update yt-dlp.';
+          console.error(`❌ Format error detected. Log file: ${logPath}`);
+        } else if (stderrBuf.includes('require a GVS PO Token')) {
+          errorMsg = 'YouTube requires authentication tokens for this video. This usually means YouTube has updated their API. Try updating yt-dlp: brew upgrade yt-dlp';
+          console.error(`❌ PO Token required. Log file: ${logPath}`);
+        } else if (stderrBuf.includes('HTTP Error 403')) {
+          errorMsg = 'YouTube blocked access (HTTP 403). The video may be age-restricted, region-locked, or require sign-in.';
+        } else if (stderrBuf.includes('HTTP Error 404')) {
+          errorMsg = 'Video not found (HTTP 404). The video may have been deleted or made private.';
+        } else if (stderrBuf.includes('This video is not available')) {
+          errorMsg = 'Video not available. It may be private, deleted, or region-restricted.';
+        }
+        
+        reject(new Error(errorMsg));
       }
     });
 

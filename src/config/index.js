@@ -16,15 +16,16 @@ module.exports = {
   RECORDING_CLEANUP_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes
   
   // yt-dlp quality format map
+  // More flexible format selectors to avoid "format not available" errors
   QUALITY_FORMAT_MAP: {
-    'best': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '2160': 'bestvideo[height<=2160]+bestaudio/best',
-    '1440': 'bestvideo[height<=1440]+bestaudio/best',
-    '1080': 'bestvideo[height<=1080]+bestaudio/best',
-    '720': 'bestvideo[height<=720]+bestaudio/best',
-    '480': 'bestvideo[height<=480]+bestaudio/best',
-    '360': 'bestvideo[height<=360]+bestaudio/best',
-    'audio': 'bestaudio[ext=m4a]/bestaudio'
+    'best': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+    '2160': 'bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best',
+    '1440': 'bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio/best',
+    '1080': 'bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best',
+    '720': 'bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best',
+    '480': 'bestvideo[height<=480]+bestaudio/bestvideo+bestaudio/best',
+    '360': 'bestvideo[height<=360]+bestaudio/bestvideo+bestaudio/best',
+    'audio': 'bestaudio/best'  // Simplified - accept any format, yt-dlp will pick best available
   },
   
   // Valid video extensions (for fallback file detection)

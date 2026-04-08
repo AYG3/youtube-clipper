@@ -1,12 +1,36 @@
 const ytdl = require('@distube/ytdl-core');
 const util = require('util');
 const { execFile } = require('child_process');
+const dns = require('dns').promises;
 const execFileAsync = util.promisify(execFile);
+
+/**
+ * Check network connectivity before attempting downloads
+ * Returns { connected: boolean, error?: string }
+ */
+async function checkNetworkConnectivity() {
+  try {
+    // Try to resolve YouTube's domain
+    const addresses = await dns.resolve4('www.youtube.com');
+    if (addresses && addresses.length > 0) {
+      console.log(`✅ DNS resolution successful: www.youtube.com -> ${addresses[0]}`);
+      return { connected: true };
+    }
+    return { connected: false, error: 'DNS resolution returned no addresses' };
+  } catch (err) {
+    console.error('❌ DNS resolution failed:', err.code, err.message);
+    return { 
+      connected: false, 
+      error: `DNS lookup failed (${err.code}): ${err.message}`,
+      code: err.code
+    };
+  }
+}
 
 /**
  * fetchVideoInfo(url)
  * Uses ytdl-core first (better for datacenter IPs), with yt-dlp fallback
- * Implements retry logic with exponential backoff for rate limiting
+ * Implements retry logic with exponential backoff for rate limiting and network issues
  * Returns an object compatible with the shape used by existing code (videoDetails...).
  * 
  * IMPORTANT: isLiveContent should only be true for CURRENTLY live streams,
@@ -14,6 +38,25 @@ const execFileAsync = util.promisify(execFile);
  */
 async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
   const baseDelay = 2000; // Start with 2 seconds
+  
+  // Pre-flight network connectivity check (only on first attempt)
+  if (retryCount === 0) {
+    const netCheck = await checkNetworkConnectivity();
+    if (!netCheck.connected) {
+      console.error('❌ Network connectivity check failed before download attempt');
+      
+      // If DNS fails, provide actionable error message
+      if (netCheck.code === 'ENOTFOUND' || netCheck.code === 'EAI_AGAIN') {
+        throw new Error(
+          `Network connection unavailable. Unable to resolve www.youtube.com. ` +
+          `Please check your internet connection and DNS settings. (${netCheck.code})`
+        );
+      }
+      
+      // For other network issues, still try but warn user
+      console.warn('⚠️  Network pre-check failed, but attempting download anyway:', netCheck.error);
+    }
+  }
   
   // Try ytdl-core FIRST (more reliable on datacenter IPs)
   try {
@@ -58,14 +101,17 @@ async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
     console.log(`Attempting yt-dlp (attempt ${retryCount + 1}/${maxRetries + 1})...`);
     const ytdlpArgs = [
       '-j',
-      '--extractor-args', 'youtube:player_client=android,tv,web;po_token=web+https://www.youtube.com',
-      '--user-agent', 'com.google.android.youtube/19.09.36 (Linux; U; Android 13) gzip',
+      '--skip-download',                   // Only fetch metadata, don't download
+      '--socket-timeout', '30',            // 30s socket timeout
+      '--retry-sleep', '5',                // Sleep between retries
+      // Use android_vr client which doesn't require n-parameter decoding
+      '--extractor-args', 'youtube:player_client=android_vr,web',
       '--no-check-certificates',
       url
     ];
     
     const { stdout } = await execFileAsync('yt-dlp', ytdlpArgs, { 
-      timeout: 30000, 
+      timeout: 45000,                      // Increased timeout for network issues
       maxBuffer: 10 * 1024 * 1024 
     });
     const meta = JSON.parse(stdout);
@@ -101,30 +147,55 @@ async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
     const errorMsg = ytErr.stderr || ytErr.message || String(ytErr);
     console.error('⚠️  yt-dlp failed:', errorMsg);
     
-    // Check for rate limiting in yt-dlp
-    if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
-      if (retryCount < maxRetries) {
-        const delay = baseDelay * Math.pow(2, retryCount);
-        console.log(`⏳ Rate limited (429). Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return fetchVideoInfo(url, retryCount + 1, maxRetries);
-      }
+    // Check for network/DNS errors and retry with backoff
+    const isNetworkError = 
+      errorMsg.includes('Failed to resolve') ||
+      errorMsg.includes('nodename nor servname') ||
+      errorMsg.includes('Unable to download') ||
+      errorMsg.includes('ENOTFOUND') ||
+      errorMsg.includes('EAI_AGAIN') ||
+      errorMsg.includes('Connection') ||
+      ytErr.code === 'ENOTFOUND' ||
+      ytErr.code === 'EAI_AGAIN';
+    
+    // Check for rate limiting
+    const isRateLimited = errorMsg.includes('429') || errorMsg.includes('Too Many Requests');
+    
+    if ((isNetworkError || isRateLimited) && retryCount < maxRetries) {
+      const delay = baseDelay * Math.pow(2, retryCount);
+      const reason = isRateLimited ? 'Rate limited (429)' : 'Network/DNS error';
+      console.log(`⏳ ${reason}. Retrying in ${delay}ms... (attempt ${retryCount + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return fetchVideoInfo(url, retryCount + 1, maxRetries);
     }
   }
 
   // Both methods failed - provide comprehensive error message
   const ytdlpMsg = ytdlpError ? (ytdlpError.stderr || ytdlpError.message || String(ytdlpError)) : '';
   
-  // Provide a helpful DNS-specific message when possible
-  if (ytdlpError && ytdlpError.code === 'ENOTFOUND') {
-    const e = new Error(`DNS resolution failed for ${ytdlpError.hostname || 'www.youtube.com'} (ENOTFOUND). Check your network or DNS settings.`);
-    e.code = 'ENOTFOUND';
+  // Check for DNS/Network errors
+  const isDNSError = 
+    ytdlpMsg.includes('Failed to resolve') ||
+    ytdlpMsg.includes('nodename nor servname') ||
+    ytdlpMsg.includes('ENOTFOUND') ||
+    ytdlpMsg.includes('EAI_AGAIN') ||
+    (ytdlpError && (ytdlpError.code === 'ENOTFOUND' || ytdlpError.code === 'EAI_AGAIN'));
+  
+  if (isDNSError) {
+    const e = new Error(
+      `Network Unavailable: Cannot connect to YouTube. ` +
+      `This is likely due to: (1) No internet connection, (2) DNS server issues, or (3) Firewall/VPN blocking YouTube. ` +
+      `Please verify your network connection and try again. ` +
+      `Troubleshooting: Run 'ping www.youtube.com' or 'nslookup www.youtube.com' to diagnose.`
+    );
+    e.code = 'NETWORK_ERROR';
     throw e;
   }
 
   // Check for specific error patterns to provide better user feedback
   const isRateLimited = ytdlpMsg.includes('429') || ytdlpMsg.includes('Too Many Requests');
   const isBotDetection = ytdlpMsg.includes('Sign in to confirm') || ytdlpMsg.includes('bot');
+  const isTimeout = ytdlpMsg.includes('timeout') || ytdlpMsg.includes('timed out');
   
   let userMessage = 'Failed to get video info';
   
@@ -132,11 +203,15 @@ async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
     userMessage = 'YouTube rate limit exceeded (HTTP 429). This often happens on cloud hosting. The service will retry automatically, or please try again in a few minutes.';
   } else if (isBotDetection) {
     userMessage = 'YouTube has detected automated access from this server. This is common on cloud hosting platforms. Please try a different video or wait a few minutes before trying again.';
+  } else if (isTimeout) {
+    userMessage = 'Connection timeout. YouTube may be slow or unreachable. Please check your network connection and try again.';
   }
   
-  const detailedError = `${userMessage}${ytdlpMsg ? ': ' + ytdlpMsg : ''}`;
+  // Only include raw error for debugging if it's not too verbose
+  const debugInfo = ytdlpMsg.length < 500 ? ytdlpMsg : ytdlpMsg.substring(0, 500) + '...';
+  const detailedError = `${userMessage}${debugInfo ? ' [Debug: ' + debugInfo + ']' : ''}`;
   
   throw new Error(detailedError);
 }
 
-module.exports = { fetchVideoInfo };
+module.exports = { fetchVideoInfo, checkNetworkConnectivity };
