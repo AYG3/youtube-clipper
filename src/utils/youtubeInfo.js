@@ -3,6 +3,7 @@ const util = require('util');
 const { execFile } = require('child_process');
 const dns = require('dns').promises;
 const execFileAsync = util.promisify(execFile);
+const state = require('../state');
 
 /**
  * Check network connectivity before attempting downloads
@@ -29,15 +30,32 @@ async function checkNetworkConnectivity() {
 
 /**
  * fetchVideoInfo(url)
- * Uses ytdl-core first (better for datacenter IPs), with yt-dlp fallback
+ * Uses yt-dlp FIRST (actively maintained, far more reliable against current
+ * YouTube changes), with ytdl-core as a lightweight fallback.
  * Implements retry logic with exponential backoff for rate limiting and network issues
  * Returns an object compatible with the shape used by existing code (videoDetails...).
  * 
  * IMPORTANT: isLiveContent should only be true for CURRENTLY live streams,
  * NOT for completed/archived livestreams (was_live).
+ *
+ * NOTE: ytdl-core frequently fails outright against current YouTube (bot
+ * detection / signature changes), so trying it first wasted a full failing
+ * attempt on nearly every request before. yt-dlp is now tried first.
  */
 async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
   const baseDelay = 2000; // Start with 2 seconds
+
+  // Serve from cache if we've looked this URL up recently. This is the
+  // single biggest lever against redundant YouTube calls: history auto-load,
+  // slider adjustments, transcript fetch, clip download, and status polling
+  // can all trigger fetchVideoInfo() for the same video within seconds.
+  if (retryCount === 0) {
+    const cached = state.getCachedVideoInfo(url);
+    if (cached) {
+      console.log(`⚡ Video info cache hit for ${url}`);
+      return cached;
+    }
+  }
   
   // Pre-flight network connectivity check (only on first attempt)
   if (retryCount === 0) {
@@ -57,45 +75,8 @@ async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
       console.warn('⚠️  Network pre-check failed, but attempting download anyway:', netCheck.error);
     }
   }
-  
-  // Try ytdl-core FIRST (more reliable on datacenter IPs)
-  try {
-    console.log(`Attempting ytdl-core (attempt ${retryCount + 1}/${maxRetries + 1})...`);
-    const info = await ytdl.getInfo(url);
-    
-    // ytdl-core's isLiveContent is true for BOTH currently live AND archived livestreams
-    // We need to check if the video has a duration - if it does, it's archived (not currently live)
-    const duration = parseInt(info.videoDetails.lengthSeconds || '0');
-    const ytdlIsLive = !!info.videoDetails.isLiveContent;
-    
-    // If ytdl says it's live but it has a duration, it's actually an archived livestream
-    const isCurrentlyLive = ytdlIsLive && duration === 0;
-    
-    console.log(`✅ Video info from ytdl-core: isLiveContent=${ytdlIsLive}, duration=${duration}, treating as live=${isCurrentlyLive}`);
-    
-    // Override isLiveContent with our corrected value
-    return {
-      videoDetails: {
-        ...info.videoDetails,
-        isLiveContent: isCurrentlyLive
-      }
-    };
-  } catch (ytdlErr) {
-    console.warn('⚠️  ytdl-core failed:', ytdlErr && (ytdlErr.message || ytdlErr));
-    
-    // Check if it's a rate limit error
-    if (ytdlErr && (ytdlErr.statusCode === 429 || ytdlErr.message?.includes('429') || ytdlErr.message?.includes('Too Many Requests'))) {
-      if (retryCount < maxRetries) {
-        const delay = baseDelay * Math.pow(2, retryCount);
-        console.log(`⏳ Rate limited (429). Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return fetchVideoInfo(url, retryCount + 1, maxRetries);
-      }
-      console.error('❌ Rate limit exceeded after retries');
-    }
-  }
 
-  // Fallback to yt-dlp with retry logic
+  // Try yt-dlp FIRST (actively maintained, handles current YouTube changes best)
   let ytdlpError = null;
   try {
     console.log(`Attempting yt-dlp (attempt ${retryCount + 1}/${maxRetries + 1})...`);
@@ -141,11 +122,12 @@ async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
     };
 
     console.log(`✅ Video info from yt-dlp: is_live=${meta.is_live}, was_live=${meta.was_live}, live_status=${meta.live_status}`);
+    state.setCachedVideoInfo(url, info);
     return info;
   } catch (ytErr) {
     ytdlpError = ytErr;
     const errorMsg = ytErr.stderr || ytErr.message || String(ytErr);
-    console.error('⚠️  yt-dlp failed:', errorMsg);
+    console.warn('⚠️  yt-dlp failed:', errorMsg);
     
     // Check for network/DNS errors and retry with backoff
     const isNetworkError = 
@@ -167,6 +149,45 @@ async function fetchVideoInfo(url, retryCount = 0, maxRetries = 3) {
       console.log(`⏳ ${reason}. Retrying in ${delay}ms... (attempt ${retryCount + 1}/${maxRetries})`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return fetchVideoInfo(url, retryCount + 1, maxRetries);
+    }
+  }
+
+  // Fallback to ytdl-core
+  try {
+    console.log(`Attempting ytdl-core fallback (attempt ${retryCount + 1}/${maxRetries + 1})...`);
+    const info = await ytdl.getInfo(url);
+    
+    // ytdl-core's isLiveContent is true for BOTH currently live AND archived livestreams
+    // We need to check if the video has a duration - if it does, it's archived (not currently live)
+    const duration = parseInt(info.videoDetails.lengthSeconds || '0');
+    const ytdlIsLive = !!info.videoDetails.isLiveContent;
+    
+    // If ytdl says it's live but it has a duration, it's actually an archived livestream
+    const isCurrentlyLive = ytdlIsLive && duration === 0;
+    
+    console.log(`✅ Video info from ytdl-core: isLiveContent=${ytdlIsLive}, duration=${duration}, treating as live=${isCurrentlyLive}`);
+    
+    // Override isLiveContent with our corrected value
+    const result = {
+      videoDetails: {
+        ...info.videoDetails,
+        isLiveContent: isCurrentlyLive
+      }
+    };
+    state.setCachedVideoInfo(url, result);
+    return result;
+  } catch (ytdlErr) {
+    console.error('❌ ytdl-core fallback also failed:', ytdlErr && (ytdlErr.message || ytdlErr));
+    
+    // Check if it's a rate limit error worth retrying the whole chain for
+    if (ytdlErr && (ytdlErr.statusCode === 429 || ytdlErr.message?.includes('429') || ytdlErr.message?.includes('Too Many Requests'))) {
+      if (retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        console.log(`⏳ Rate limited (429). Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchVideoInfo(url, retryCount + 1, maxRetries);
+      }
+      console.error('❌ Rate limit exceeded after retries');
     }
   }
 

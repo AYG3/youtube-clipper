@@ -143,6 +143,108 @@ function cleanupStalePartials(maxAgeHours = 24) {
 }
 
 /**
+ * Get total size (bytes) of all files currently in TEMP_DIR.
+ * @returns {number}
+ */
+function getTempDirUsageBytes() {
+  try {
+    if (!fs.existsSync(config.TEMP_DIR)) return 0;
+    const files = fs.readdirSync(config.TEMP_DIR);
+    let total = 0;
+    for (const file of files) {
+      try {
+        const filePath = path.join(config.TEMP_DIR, file);
+        const stats = fs.statSync(filePath);
+        if (stats.isFile()) total += stats.size;
+      } catch (e) {
+        // File may have been removed concurrently by another process - skip it
+      }
+    }
+    return total;
+  } catch (e) {
+    console.error('Error computing temp dir usage:', e.message);
+    return 0;
+  }
+}
+
+/**
+ * Enforce a maximum total disk usage for TEMP_DIR. If usage exceeds the
+ * given limit, deletes the OLDEST partial/incomplete downloads first until
+ * back under the limit. Never deletes completed (non-.part) files, since
+ * those may be actively awaiting download/resume by a user.
+ *
+ * This exists because the age+size based cleanupStalePartials() above will
+ * happily leave a large stuck/crashed partial (e.g. multiple GB) sitting
+ * around indefinitely if it's under 24h old or over 1MB - which can slowly
+ * fill the disk and cause every subsequent download to start failing with
+ * a confusing "no space left on device" error instead of a clear one.
+ *
+ * @param {number} maxBytes
+ * @returns {{ freedBytes: number, deletedFiles: string[], usageBeforeBytes: number, usageAfterBytes: number }}
+ */
+function enforceTempDirSizeLimit(maxBytes) {
+  const result = { freedBytes: 0, deletedFiles: [], usageBeforeBytes: 0, usageAfterBytes: 0 };
+  try {
+    if (!fs.existsSync(config.TEMP_DIR)) return result;
+
+    let totalBytes = getTempDirUsageBytes();
+    result.usageBeforeBytes = totalBytes;
+
+    if (totalBytes <= maxBytes) {
+      result.usageAfterBytes = totalBytes;
+      return result;
+    }
+
+    console.warn(
+      `⚠️  Temp dir usage (${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB) exceeds limit ` +
+      `(${(maxBytes / (1024 * 1024 * 1024)).toFixed(2)} GB) - freeing space by removing oldest partial downloads...`
+    );
+
+    // Only ever evict partial/incomplete files, oldest first. Completed
+    // files are left alone - a user may be about to download/resume them.
+    const candidates = fs.readdirSync(config.TEMP_DIR)
+      .filter(f => isPartialFile(f))
+      .map(f => {
+        const filePath = path.join(config.TEMP_DIR, f);
+        try {
+          const stats = fs.statSync(filePath);
+          return { file: f, filePath, size: stats.size, mtimeMs: stats.mtimeMs };
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.mtimeMs - b.mtimeMs); // oldest first
+
+    for (const entry of candidates) {
+      if (totalBytes <= maxBytes) break;
+      try {
+        fs.unlinkSync(entry.filePath);
+        totalBytes -= entry.size;
+        result.freedBytes += entry.size;
+        result.deletedFiles.push(entry.file);
+        console.log(`🧹 Freed ${(entry.size / (1024 * 1024)).toFixed(1)} MB by removing stale partial: ${entry.file}`);
+      } catch (e) {
+        console.warn(`Failed to delete ${entry.file} while enforcing disk limit:`, e.message);
+      }
+    }
+
+    result.usageAfterBytes = totalBytes;
+
+    if (totalBytes > maxBytes) {
+      console.error(
+        `⚠️  Temp dir still over limit after evicting all partials ` +
+        `(${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB). Completed files are never ` +
+        `auto-deleted here - consider raising MAX_TEMP_DIR_BYTES or clearing finished clips manually.`
+      );
+    }
+  } catch (e) {
+    console.error('Error enforcing temp dir size limit:', e.message);
+  }
+  return result;
+}
+
+/**
  * Validate if a download is resumable
  * @param {string} filePath
  * @returns {{ resumable: boolean, reason: string, sizeMB: number }}
@@ -177,5 +279,7 @@ module.exports = {
   isPartialFile,
   getFileSizeMB,
   cleanupStalePartials,
+  getTempDirUsageBytes,
+  enforceTempDirSizeLimit,
   validateResumable
 };

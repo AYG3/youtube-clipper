@@ -9,6 +9,29 @@ let wasPlayingBeforePin = false;
 let isUserDraggingEnd = false;
 let lastEndSliderInteraction = 0;
 let transcriptSearch = null;
+let currentDownloadClipId = null; // used to filter WS/polling progress to only this client's own active download
+
+/**
+ * Compute the same deterministic clipId hash the server uses
+ * (sha256(url|start|end|quality) truncated to 12 hex chars), so this
+ * client can recognize its own progress messages on a shared WebSocket
+ * without waiting on a round trip. Falls back to null (no filtering) in
+ * browsers/contexts without SubtleCrypto (e.g. non-HTTPS, very old browsers).
+ */
+async function computeClipId(url, startSeconds, endSeconds, quality) {
+    try {
+        if (!window.crypto || !window.crypto.subtle) return null;
+        const input = `${url}|${startSeconds}|${endSeconds}|${quality}`;
+        const encoded = new TextEncoder().encode(input);
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', encoded);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hex.slice(0, 12);
+    } catch (e) {
+        console.warn('Could not compute clipId client-side, progress filtering disabled:', e.message);
+        return null;
+    }
+}
 
 // ========== Video History Management Module ==========
 const VideoHistory = {
@@ -604,6 +627,59 @@ endTime.addEventListener('keypress', (e) => {
     }
 });
 
+/**
+ * Save a blob to disk, letting the user pick the exact folder + filename
+ * via the File System Access API's save dialog when the browser supports
+ * it (Chrome/Edge desktop). Falls back to the standard anchor-click
+ * download (goes to the browser's default Downloads location, or its own
+ * "ask where to save" prompt if the user has that browser setting on)
+ * everywhere else, e.g. Firefox, Safari, mobile browsers.
+ *
+ * @param {Blob} blob
+ * @param {string} suggestedName
+ * @param {string} mimeType
+ * @returns {Promise<'picker'|'fallback'|'cancelled'>}
+ */
+async function saveBlobToUserChosenLocation(blob, suggestedName, mimeType = 'video/mp4') {
+    if (window.showSaveFilePicker) {
+        try {
+            const isAudio = mimeType.includes('audio');
+            const handle = await window.showSaveFilePicker({
+                suggestedName,
+                types: [{
+                    description: isAudio ? 'Audio file' : 'Video file',
+                    accept: isAudio
+                        ? { 'audio/mp4': ['.m4a'], 'audio/mpeg': ['.mp3'] }
+                        : { 'video/mp4': ['.mp4'] }
+                }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return 'picker';
+        } catch (err) {
+            if (err && err.name === 'AbortError') {
+                // User explicitly cancelled the save dialog - respect that
+                // choice rather than silently auto-downloading elsewhere.
+                return 'cancelled';
+            }
+            console.warn('showSaveFilePicker failed, falling back to default download:', err.message);
+            // fall through to the standard download below
+        }
+    }
+
+    // Fallback: standard anchor-click download
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
+    return 'fallback';
+}
+
 // Download clip
 downloadBtn.addEventListener('click', async () => {
     const url = youtubeUrlInput.value.trim();
@@ -625,12 +701,26 @@ downloadBtn.addEventListener('click', async () => {
     document.querySelector('.spinner').classList.remove('hidden');
     showStatus('📥 Downloading and clipping video... This may take a few minutes.', 'info');
 
+    const quality = (qualitySelect ? qualitySelect.value : 'best');
+
+    // Compute this download's clipId client-side up front so we can filter
+    // the shared WebSocket/polling progress feed down to just this download
+    // - otherwise, if another tab or another user's download is also in
+    // progress, this progress bar could show their percentage instead.
+    currentDownloadClipId = await computeClipId(url, start, end, quality);
+
     // Show and start progress polling
     progressContainer.classList.remove('hidden');
     let progressInterval = setInterval(async () => {
         try {
             const res = await fetch('/api/progress');
             const prog = await res.json();
+            // Ignore progress that isn't for this download (e.g. another
+            // tab/user's clip, or no clipId info available at all after a
+            // server restart cleared it).
+            if (currentDownloadClipId && prog.clipId && prog.clipId !== currentDownloadClipId) {
+                return;
+            }
             progressFill.style.width = `${prog.percent}%`;
             progressText.textContent = `${prog.message}: ${prog.percent.toFixed(1)}%`;
         } catch (e) {
@@ -645,7 +735,7 @@ downloadBtn.addEventListener('click', async () => {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ url, start, end, quality: (qualitySelect ? qualitySelect.value : 'best'), background }),
+            body: JSON.stringify({ url, start, end, quality, background }),
             // Prevent CORS issues
             mode: 'cors',
             credentials: 'same-origin'
@@ -672,33 +762,39 @@ downloadBtn.addEventListener('click', async () => {
         // If background download was requested, server returns JSON with id and status
         if (background) {
             const j = await response.json();
+            currentDownloadClipId = j.id || currentDownloadClipId;
             showStatus(`Background download started (id: ${j.id})`, 'info');
-            startClipStatusPolling({ url, start, end, quality: (qualitySelect ? qualitySelect.value : 'best') });
+            startClipStatusPolling({ url, start, end, quality });
         } else {
+            // Prefer the authoritative clipId the server computed, in case
+            // our client-side hash ever drifts from the server's formula.
+            const serverClipId = response.headers.get('X-Clip-Id');
+            if (serverClipId) currentDownloadClipId = serverClipId;
+
             // Get the filename from Content-Disposition header
             const contentDisposition = response.headers.get('Content-Disposition');
             const filename = contentDisposition
                 ? contentDisposition.split('filename=')[1].replace(/"/g, '')
                 : 'clip.mp4';
+            const mimeType = response.headers.get('Content-Type') || 'video/mp4';
 
-            // Download the file
+            // Download the file - lets the user pick where to save it, if
+            // their browser supports it.
             const blob = await response.blob();
-            const downloadUrl = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(downloadUrl);
+            const saveResult = await saveBlobToUserChosenLocation(blob, filename, mimeType);
 
-            showStatus('✅ Clip downloaded successfully!', 'success');
+            if (saveResult === 'cancelled') {
+                showStatus('Download cancelled - the clip finished processing but was not saved.', 'info');
+            } else {
+                showStatus('✅ Clip downloaded successfully!', 'success');
+            }
         }
 
     } catch (error) {
         console.error('Error downloading clip:', error);
         showStatus(error.message, 'error');
     } finally {
+        currentDownloadClipId = null;
         downloadBtn.disabled = false;
         document.querySelector('.btn-text').textContent = 'Download Clip';
         document.querySelector('.spinner').classList.add('hidden');
@@ -793,8 +889,10 @@ async function refreshRecordingsList() {
                     const dl = await fetch(`/api/record/${r.id}/download`);
                     if (!dl.ok) { const d = await dl.json().catch(() =>{}); throw new Error(d?.error || 'Download failed'); }
                     const blob = await dl.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a'); a.href = url; a.download = `${r.title || 'recording'}.mp4`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+                    const saveResult = await saveBlobToUserChosenLocation(blob, `${r.title || 'recording'}.mp4`, 'video/mp4');
+                    if (saveResult === 'cancelled') {
+                        showStatus('Download cancelled.', 'info');
+                    }
                 } catch (e) {
                     showStatus('Download failed: ' + e.message, 'error');
                 }
@@ -937,15 +1035,12 @@ saveClipFromRecordingBtn.addEventListener('click', async () => {
             throw new Error(d.error || 'Failed to create clip');
         }
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'clip.mp4';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        showStatus('Clip downloaded!', 'success');
+        const saveResult = await saveBlobToUserChosenLocation(blob, 'clip.mp4', 'video/mp4');
+        if (saveResult === 'cancelled') {
+            showStatus('Download cancelled - the clip finished processing but was not saved.', 'info');
+        } else {
+            showStatus('Clip downloaded!', 'success');
+        }
     } catch (e) {
         showStatus(e.message, 'error');
     } finally {
@@ -972,6 +1067,12 @@ function connectWebSocket() {
 
 function handleWsMessage(data) {
     if (data.type === 'progress') {
+        // Ignore progress updates for a different clip (e.g. another tab or
+        // another user downloading on the same server) so this progress bar
+        // only ever reflects what this browser tab actually started.
+        if (currentDownloadClipId && data.clipId && data.clipId !== currentDownloadClipId) {
+            return;
+        }
         // Update progress UI
         progressFill.style.width = `${data.percent}%`;
         progressText.textContent = `${data.message}: ${data.percent.toFixed(1)}%`;
@@ -1073,6 +1174,7 @@ if (resumeBtn) resumeBtn.addEventListener('click', async () => {
     const quality = (qualitySelect ? qualitySelect.value : 'best');
     const bg = !!(backgroundCheckbox && backgroundCheckbox.checked);
     resumeBtn.disabled = true;
+    currentDownloadClipId = await computeClipId(url, start, end, quality);
     try {
         const res = await fetch('/api/clip/resume', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ url, start, end, quality, background: bg })
@@ -1083,6 +1185,7 @@ if (resumeBtn) resumeBtn.addEventListener('click', async () => {
         }
         if (bg) {
             const j = await res.json();
+            currentDownloadClipId = j.id || currentDownloadClipId;
             showStatus(`Background resume started (id: ${j.id})`, 'info');
             startClipStatusPolling({ url, start, end, quality });
         } else {
@@ -1090,13 +1193,20 @@ if (resumeBtn) resumeBtn.addEventListener('click', async () => {
             const blob = await res.blob();
             const contentDisposition = res.headers.get('Content-Disposition');
             const filename = contentDisposition ? contentDisposition.split('filename=')[1].replace(/"/g,'') : 'clip.mp4';
-            const urlObj = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = urlObj; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(urlObj);
-            showStatus('✅ Clip downloaded via resume', 'success');
+            const mimeType = res.headers.get('Content-Type') || 'video/mp4';
+            const saveResult = await saveBlobToUserChosenLocation(blob, filename, mimeType);
+            if (saveResult === 'cancelled') {
+                showStatus('Download cancelled - the clip finished processing but was not saved.', 'info');
+            } else {
+                showStatus('✅ Clip downloaded via resume', 'success');
+            }
         }
     } catch (e) {
         showStatus('Resume failed: ' + e.message, 'error');
-    } finally { resumeBtn.disabled = false; }
+    } finally {
+        currentDownloadClipId = null;
+        resumeBtn.disabled = false;
+    }
 });
 
 // ========== Clear Video Button ==========

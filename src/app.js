@@ -4,6 +4,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const config = require('./config');
 
 const timeoutMiddleware = require('./middleware/timeout');
 const videoRoutes = require('./routes/videoRoutes');
@@ -12,7 +13,7 @@ const recordRoutes = require('./routes/recordRoutes');
 const configRoutes = require('./routes/configRoutes');
 const transcriptRoutes = require('./routes/transcriptRoutes');
 const healthRoutes = require('./routes/healthRoutes');
-const { cleanupStalePartials } = require('./utils/file');
+const { cleanupStalePartials, enforceTempDirSizeLimit } = require('./utils/file');
 
 const app = express();
 
@@ -21,7 +22,8 @@ const corsOptions = {
   origin: process.env.ALLOWED_ORIGINS 
     ? process.env.ALLOWED_ORIGINS.split(',') 
     : '*',
-  credentials: true
+  credentials: true,
+  exposedHeaders: ['X-Clip-Id'] // let the front-end read this for progress-bar correlation
 };
 
 // Middleware
@@ -115,6 +117,9 @@ setTimeout(() => {
   if (deleted > 0) {
     console.log(`🧹 Cleaned up ${deleted} stale partial download(s)`);
   }
+  // Also enforce an overall disk-usage cap - catches large stuck partials
+  // that the age+size based cleanup above wouldn't touch.
+  enforceTempDirSizeLimit(config.MAX_TEMP_DIR_BYTES);
 }, 5000); // Wait 5s after startup
 
 // Schedule periodic cleanup every 6 hours
@@ -123,6 +128,13 @@ setInterval(() => {
   if (deleted > 0) {
     console.log(`🧹 Periodic cleanup: removed ${deleted} stale partial(s)`);
   }
+  enforceTempDirSizeLimit(config.MAX_TEMP_DIR_BYTES);
 }, 6 * 60 * 60 * 1000);
+
+// Also check the disk usage cap more frequently (every 15 minutes) since a
+// single large stuck download can fill the disk well within a 6 hour window.
+setInterval(() => {
+  enforceTempDirSizeLimit(config.MAX_TEMP_DIR_BYTES);
+}, 15 * 60 * 1000);
 
 module.exports = app;

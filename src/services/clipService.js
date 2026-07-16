@@ -9,7 +9,23 @@ const state = require('../state');
 const { wsBroadcast } = require('../utils/broadcast');
 const { killChildProcess } = require('../utils/process');
 const { parseFFmpegTime } = require('../utils/time');
-const { getClipIdAndPath, waitForFile, findFallbackOutputFile, ensureTempDir, validateResumable } = require('../utils/file');
+const { getClipIdAndPath, waitForFile, findFallbackOutputFile, ensureTempDir, validateResumable, enforceTempDirSizeLimit } = require('../utils/file');
+const { execFileSync } = require('child_process');
+
+// Cache aria2c availability check (only need to check once per process)
+let aria2cAvailable = null;
+function isAria2cAvailable() {
+  if (aria2cAvailable !== null) return aria2cAvailable;
+  try {
+    execFileSync('aria2c', ['--version'], { stdio: 'ignore', timeout: 5000 });
+    aria2cAvailable = true;
+    console.log('✅ aria2c detected - using it for faster multi-connection downloads');
+  } catch (e) {
+    aria2cAvailable = false;
+    console.log('ℹ️  aria2c not found - using yt-dlp\'s native downloader (install aria2c for faster downloads)');
+  }
+  return aria2cAvailable;
+}
 
 /**
  * Spawn yt-dlp to download a clip segment
@@ -26,6 +42,12 @@ async function downloadClip({
   onKillRequested
 }) {
   ensureTempDir();
+
+  // Defensive disk-usage check right before starting a new download - the
+  // periodic checks in app.js run every 15 minutes, but a download starting
+  // right after a big one filled the disk shouldn't have to wait for that.
+  enforceTempDirSizeLimit(config.MAX_TEMP_DIR_BYTES);
+
   const { clipId, outputPath, filename, ext } = getClipIdAndPath({ url, startSeconds, endSeconds, quality });
   const clipDuration = endSeconds - startSeconds;
 
@@ -84,6 +106,15 @@ async function downloadClip({
     url
   ];
 
+  // Use aria2c as external downloader if available - real multi-connection
+  // segmented downloading, typically the single biggest free speed win.
+  if (isAria2cAvailable()) {
+    args.unshift(
+      '--downloader', 'aria2c',
+      '--downloader-args', 'aria2c:-x 8 -s 8 -k 1M --summary-interval=1'
+    );
+  }
+
   console.log('Spawning yt-dlp with args:', args.join(' '));
   const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   try { proc.unref(); } catch (e) { /* ignore */ }
@@ -138,7 +169,7 @@ async function downloadClip({
       }
       
       const message = speed ? `Downloading (${speed})` : 'Downloading';
-      state.currentProgress = { percent: pct, message };
+      state.currentProgress = { percent: pct, message, clipId };
       const clip = state.activeClips.get(clipId);
       if (clip) { clip.percent = pct; clip.message = message; }
       wsBroadcast({ type: 'progress', ...state.currentProgress });
@@ -158,7 +189,7 @@ async function downloadClip({
       const secs = parseFFmpegTime(timeMatch[1]);
       let percent = (secs / clipDuration) * 100;
       if (percent > 100) percent = 100;
-      state.currentProgress = { percent, message: 'Processing' };
+      state.currentProgress = { percent, message: 'Processing', clipId };
       const clip = state.activeClips.get(clipId);
       if (clip) { clip.percent = percent; clip.message = 'Processing'; }
       wsBroadcast({ type: 'progress', ...state.currentProgress });
@@ -198,7 +229,7 @@ async function downloadClip({
 
       if (code === 0) {
         console.log('Clip created successfully');
-        state.currentProgress = { percent: 100, message: 'Complete' };
+        state.currentProgress = { percent: 100, message: 'Complete', clipId };
         wsBroadcast({ type: 'progress', ...state.currentProgress });
         resolve({ clipId, outputPath, filename, ext });
       } else {

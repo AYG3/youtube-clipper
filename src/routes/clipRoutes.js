@@ -22,9 +22,25 @@ const router = express.Router();
 router.post('/', async (req, res) => {
   let outputPath = null;
   let killFn = null;
+  let downloadSlotAcquired = false;
+  let downloadSlotReleased = false;
+  const clientIp = req.ip;
+  const releaseDownloadSlot = () => {
+    if (downloadSlotAcquired && !downloadSlotReleased) {
+      downloadSlotReleased = true;
+      state.endDownload(clientIp);
+    }
+  };
 
+  // NOTE: We intentionally do NOT kill the yt-dlp process here on client
+  // disconnect anymore. A wifi blip, phone lock, or backgrounded tab used to
+  // SIGINT a perfectly healthy download, throwing away real progress even
+  // though the app already has --continue/resume support and a
+  // /api/clip/status + /api/clip/resume flow built for exactly this case.
+  // Disconnects are now just logged; the download keeps running server-side
+  // and the client (or a future request) can resume/reattach to it.
   const killYtdlp = (reason) => {
-    if (killFn) killFn();
+    console.warn(`Client disconnect (${reason}) - download continues in background, use /api/clip/status or /api/clip/resume to reattach.`);
   };
 
   try {
@@ -59,12 +75,31 @@ router.post('/', async (req, res) => {
 
     const clipDuration = endSeconds - startSeconds;
 
+    // Compute clipId early (deterministic hash of url/start/end/quality) so
+    // we can tag every progress broadcast with it - lets clients filter to
+    // only their own download instead of showing whatever the most recent
+    // progress update was across all users/tabs on the server.
+    const { clipId } = getClipIdAndPath({ url, startSeconds, endSeconds, quality });
+
+    // Concurrent download queue - reject a second simultaneous download from
+    // the same client instead of letting two yt-dlp processes fight for the
+    // same outbound bandwidth (which slows both down and makes drops more
+    // likely). Check /api/clip/status or /api/records to see what's active.
+    if (!state.canStartDownload(clientIp)) {
+      return res.status(429).json({
+        error: 'You already have a download in progress. Please wait for it to finish, or check its status, before starting another.',
+        retryable: true
+      });
+    }
+    state.startDownload(clientIp);
+    downloadSlotAcquired = true;
+
     console.log(`\n${'='.repeat(60)}`);
     console.log(`📹 Clipping video segment: ${startSeconds}s to ${endSeconds}s (${clipDuration}s duration)`);
     console.log(`${'='.repeat(60)}\n`);
 
     // Reset progress
-    state.currentProgress = { percent: 0, message: 'Starting' };
+    state.currentProgress = { percent: 0, message: 'Starting', clipId };
     wsBroadcast({ type: 'progress', ...state.currentProgress });
 
     // Set timeout
@@ -80,7 +115,7 @@ router.post('/', async (req, res) => {
 
     // If background mode, start and return immediately
     if (background) {
-      const { clipId, filename } = getClipIdAndPath({ url, startSeconds, endSeconds, quality });
+      const { filename } = getClipIdAndPath({ url, startSeconds, endSeconds, quality });
       // Start download in background (don't await)
       clipService.downloadClip({
         url,
@@ -89,27 +124,36 @@ router.post('/', async (req, res) => {
         quality,
         background: true,
         onKillRequested: (fn) => { killFn = fn; }
-      }).catch(err => console.error('Background clip error:', err.message));
+      })
+        .catch(err => console.error('Background clip error:', err.message))
+        .finally(releaseDownloadSlot);
 
       return res.json({ id: clipId, status: 'started', filename });
     }
 
     // Foreground: wait for download to complete
-    const result = await clipService.downloadClip({
-      url,
-      startSeconds,
-      endSeconds,
-      quality,
-      background: false,
-      onKillRequested: (fn) => { killFn = fn; }
-    });
+    let result;
+    try {
+      result = await clipService.downloadClip({
+        url,
+        startSeconds,
+        endSeconds,
+        quality,
+        background: false,
+        onKillRequested: (fn) => { killFn = fn; }
+      });
+    } finally {
+      // The yt-dlp process itself is done at this point (success or error);
+      // release the slot now rather than waiting for the file to be sent.
+      releaseDownloadSlot();
+    }
 
     outputPath = result.outputPath;
     const ext = result.ext;
 
-    // Handle client disconnect
-    res.on('close', () => { console.warn('Response closed by client'); killYtdlp('client_close'); });
-    req.on('aborted', () => { console.warn('Request aborted by client'); killYtdlp('client_aborted'); });
+    // Handle client disconnect (log only - download is NOT killed, see killYtdlp above)
+    res.on('close', () => { killYtdlp('client_close'); });
+    req.on('aborted', () => { killYtdlp('client_aborted'); });
 
     // Wait for file
     try {
@@ -126,6 +170,7 @@ router.post('/', async (req, res) => {
     // Set content type
     const mimeType = (ext === 'm4a' || ext === 'mp3') ? 'audio/mp4' : 'video/mp4';
     res.setHeader('Content-Type', mimeType);
+    res.setHeader('X-Clip-Id', clipId);
 
     if (!fs.existsSync(outputPath)) {
       console.error('Output file not found:', outputPath);
@@ -144,6 +189,9 @@ router.post('/', async (req, res) => {
 
   } catch (error) {
     console.error('Error processing clip:', error);
+    // Safety net: release the queue slot if it was acquired but we hit an
+    // unexpected error before the normal release points ran.
+    releaseDownloadSlot();
 
     // DO NOT delete partial/failed files - preserve for resume
     if (outputPath && fs.existsSync(outputPath)) {
@@ -194,6 +242,16 @@ router.all('/status', async (req, res) => {
  * POST /api/clip/resume - Resume or start a clip
  */
 router.post('/resume', async (req, res) => {
+  const clientIp = req.ip;
+  let downloadSlotAcquired = false;
+  let downloadSlotReleased = false;
+  const releaseDownloadSlot = () => {
+    if (downloadSlotAcquired && !downloadSlotReleased) {
+      downloadSlotReleased = true;
+      state.endDownload(clientIp);
+    }
+  };
+
   try {
     const { url, start, end, quality = 'best', background = true } = req.body || {};
 
@@ -238,30 +296,51 @@ router.post('/resume', async (req, res) => {
       }
     }
 
+    // Concurrent download queue - same protection as the main /api/clip route.
+    if (!state.canStartDownload(clientIp)) {
+      return res.status(429).json({
+        error: 'You already have a download in progress. Please wait for it to finish, or check its status, before starting another.',
+        retryable: true
+      });
+    }
+    state.startDownload(clientIp);
+    downloadSlotAcquired = true;
+
     // Start or resume download
     const action = fs.existsSync(outputPath) ? 'Resuming' : 'Starting';
     console.log(`${action} clip:`, clipId);
-    
-    clipService.downloadClip({
-      url,
-      startSeconds,
-      endSeconds,
-      quality,
-      background: true
-    }).catch(err => console.error('Resume error:', err.message));
 
+    // NOTE: previously this called downloadClip() once here (fire-and-forget,
+    // background:true) and then AGAIN below when background=false, spawning
+    // two yt-dlp processes for the same clip at once. Fixed to call it
+    // exactly once, branching on the requested mode like the main route does.
     if (background) {
+      clipService.downloadClip({
+        url,
+        startSeconds,
+        endSeconds,
+        quality,
+        background: true
+      })
+        .catch(err => console.error('Resume error:', err.message))
+        .finally(releaseDownloadSlot);
+
       return res.json({ id: clipId, status: 'started', filename, action: action.toLowerCase() });
     }
 
     // Foreground: wait for completion
-    const result = await clipService.downloadClip({
-      url,
-      startSeconds,
-      endSeconds,
-      quality,
-      background: false
-    });
+    let result;
+    try {
+      result = await clipService.downloadClip({
+        url,
+        startSeconds,
+        endSeconds,
+        quality,
+        background: false
+      });
+    } finally {
+      releaseDownloadSlot();
+    }
 
     if (!fs.existsSync(result.outputPath)) {
       return res.status(500).json({ error: 'Output file not found after resume' });
@@ -269,6 +348,7 @@ router.post('/resume', async (req, res) => {
     return res.download(result.outputPath, result.filename);
   } catch (err) {
     console.error('Resume error:', err);
+    releaseDownloadSlot();
     res.status(500).json({ error: err.message });
   }
 });
