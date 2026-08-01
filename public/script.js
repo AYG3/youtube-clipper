@@ -778,6 +778,9 @@ downloadBtn.addEventListener('click', async () => {
                 : 'clip.mp4';
             const mimeType = response.headers.get('Content-Type') || 'video/mp4';
 
+            // Check for quality downgrade warning from the server
+            const qualityWarning = response.headers.get('X-Quality-Warning');
+
             // Download the file - lets the user pick where to save it, if
             // their browser supports it.
             const blob = await response.blob();
@@ -785,6 +788,8 @@ downloadBtn.addEventListener('click', async () => {
 
             if (saveResult === 'cancelled') {
                 showStatus('Download cancelled - the clip finished processing but was not saved.', 'info');
+            } else if (qualityWarning) {
+                showStatus('⚠️ ' + qualityWarning, 'warning');
             } else {
                 showStatus('✅ Clip downloaded successfully!', 'success');
             }

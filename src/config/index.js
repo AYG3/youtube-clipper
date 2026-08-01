@@ -16,18 +16,26 @@ module.exports = {
   RECORDING_CLEANUP_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes
   
   // yt-dlp quality format map
-  // Prefer pre-muxed/progressive mp4 streams first (no ffmpeg remux needed),
-  // fall back to separate video+audio streams merged into mp4 if no
-  // progressive stream is available at the requested quality.
+  //
+  // We use bestvideo+bestaudio as the primary format selection because:
+  // - `best[ext=mp4]` biases toward h264/mp4 formats which are the ones
+  //   most frequently blocked by YouTube's SABR-only streaming experiment
+  //   (format listed via -F but not actually downloadable with a URL).
+  // - bestvideo+bestaudio picks the highest-quality format that is
+  //   ACTUALLY downloadable, which is typically AV1 (av01) or VP9 when
+  //   h264 is blocked. This reliably produces real 1080p+.
+  // - The "best" fallback at the end of each chain catches any edge case
+  //   where separate streams can't be selected (e.g. old progressive-only
+  //   videos, live streams).
   QUALITY_FORMAT_MAP: {
-    'best': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-    '2160': 'best[ext=mp4][height<=2160]/bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best',
-    '1440': 'best[ext=mp4][height<=1440]/bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio/best',
-    '1080': 'best[ext=mp4][height<=1080]/bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best',
-    '720': 'best[ext=mp4][height<=720]/bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best',
-    '480': 'best[ext=mp4][height<=480]/bestvideo[height<=480]+bestaudio/bestvideo+bestaudio/best',
-    '360': 'best[ext=mp4][height<=360]/bestvideo[height<=360]+bestaudio/bestvideo+bestaudio/best',
-    'audio': 'bestaudio/best'  // Simplified - accept any format, yt-dlp will pick best available
+    'best': 'bestvideo+bestaudio/best',
+    '2160': 'bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best',
+    '1440': 'bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio/best',
+    '1080': 'bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best',
+    '720': 'bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best',
+    '480': 'bestvideo[height<=480]+bestaudio/bestvideo+bestaudio/best',
+    '360': 'bestvideo[height<=360]+bestaudio/bestvideo+bestaudio/best',
+    'audio': 'bestaudio/best'
   },
   
   // Valid video extensions (for fallback file detection)

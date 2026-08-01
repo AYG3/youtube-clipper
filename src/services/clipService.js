@@ -12,6 +12,56 @@ const { parseFFmpegTime } = require('../utils/time');
 const { getClipIdAndPath, waitForFile, findFallbackOutputFile, ensureTempDir, validateResumable, enforceTempDirSizeLimit } = require('../utils/file');
 const { execFileSync } = require('child_process');
 
+/**
+ * Run ffprobe on a file and extract the video resolution (width x height).
+ * Returns null if ffprobe isn't available or the file has no video stream.
+ */
+function getVideoResolution(filePath) {
+  try {
+    const result = execFileSync('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-of', 'csv=s=x:p=0',
+      filePath
+    ], { encoding: 'utf8', timeout: 10000 }).trim();
+    if (result && result.includes('x')) return result; // e.g. "1920x1080"
+    return null;
+  } catch (e) {
+    console.warn('ffprobe resolution check failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Map a quality label like "1080" or "best" to a target height for comparison.
+ */
+function qualityToHeight(quality) {
+  const map = { '2160': 2160, '1440': 1440, '1080': 1080, '720': 720, '480': 480, '360': 360 };
+  return map[quality] || null; // null for "best" and "audio"
+}
+
+/**
+ * Check whether the actual resolution is meaningfully lower than what was requested.
+ */
+function buildQualityWarning(requestedQuality, actualResolution) {
+  if (!actualResolution) return null;
+  const targetHeight = qualityToHeight(requestedQuality);
+  if (targetHeight === null) return null; // "best" or "audio" - no specific height to compare
+  const match = actualResolution.match(/^\d+x(\d+)$/);
+  if (!match) return null;
+  const actualHeight = parseInt(match[1], 10);
+  // Flag if actual is 2+ tiers below requested (e.g. requested 1080, got 480 or lower)
+  if (actualHeight <= 480 && targetHeight >= 1080) {
+    return `Only ${actualHeight}p was available for this video (requested ${requestedQuality}p). YouTube may be restricting higher formats.`;
+  }
+  // Also flag if actual is more than one tier below
+  if (actualHeight < targetHeight && actualHeight <= 720 && targetHeight >= 1080) {
+    return `Downloaded at ${actualHeight}p instead of requested ${requestedQuality}p. Higher formats may not be available for this video.`;
+  }
+  return null;
+}
+
 // Cache aria2c availability check (only need to check once per process)
 let aria2cAvailable = null;
 function isAria2cAvailable() {
@@ -85,8 +135,15 @@ async function downloadClip({
     '-f', chosenFormat,
     '--download-sections', `*${startSeconds}-${endSeconds}`,
     '--force-keyframes-at-cuts',
-    // Don't restrict player_client - let yt-dlp auto-select best client for downloads
-    // (web-only restriction causes "format not available" errors with --download-sections)
+    // Use the widest possible player-client list to maximize the chance of
+    // finding a high-resolution format. YouTube is progressively rolling out
+    // SABR-only streaming (which blocks adaptive formats for certain
+    // clients), so covering as many clients as possible gives us the best
+    // shot at getting real 1080p+ when it's available. Each client type hits
+    // a different YouTube server endpoint — if one returns SABR-blocked
+    // formats (missing URL / DRM), another may still provide working URLs.
+    // See https://github.com/yt-dlp/yt-dlp/issues/12482
+    '--extractor-args', 'youtube:player_client=android,tv,web,web_safari,ios,mweb,android_vr,web_embedded,tv_embedded,web_creator',
     '--no-check-certificates',
     // Enhanced network reliability configuration
     '--socket-timeout', '30',             // 30s socket timeout for slow networks
@@ -231,7 +288,18 @@ async function downloadClip({
         console.log('Clip created successfully');
         state.currentProgress = { percent: 100, message: 'Complete', clipId };
         wsBroadcast({ type: 'progress', ...state.currentProgress });
-        resolve({ clipId, outputPath, filename, ext });
+
+        // Check actual resolution of the output file
+        const actualResolution = getVideoResolution(outputPath);
+        const qualityWarning = buildQualityWarning(quality, actualResolution);
+        if (actualResolution) {
+          console.log(`📐 Output resolution: ${actualResolution}`);
+        }
+        if (qualityWarning) {
+          console.warn(`⚠️  Quality downgrade: ${qualityWarning}`);
+        }
+
+        resolve({ clipId, outputPath, filename, ext, actualResolution, qualityWarning });
       } else {
         const msg = `yt-dlp exited with code ${code} signal ${signal}`;
         console.error(msg);
@@ -345,5 +413,7 @@ function getClipStatus({ url, startSeconds, endSeconds, quality = 'best' }) {
 module.exports = {
   downloadClip,
   getClipStatus,
-  getClipIdAndPath
+  getClipIdAndPath,
+  getVideoResolution,
+  buildQualityWarning
 };

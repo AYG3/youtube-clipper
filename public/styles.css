@@ -653,6 +653,12 @@ header p {
     border: 1px solid #ccf;
 }
 
+.status.warning {
+    background: #fff8e1;
+    color: #e65100;
+    border: 1px solid #ffe0b2;
+}
+
 .hidden {
     display: none !important;
 }

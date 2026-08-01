@@ -171,6 +171,10 @@ router.post('/', async (req, res) => {
     const mimeType = (ext === 'm4a' || ext === 'mp3') ? 'audio/mp4' : 'video/mp4';
     res.setHeader('Content-Type', mimeType);
     res.setHeader('X-Clip-Id', clipId);
+    // Surface quality downgrade warning to the frontend
+    if (result.qualityWarning) {
+      res.setHeader('X-Quality-Warning', result.qualityWarning);
+    }
 
     if (!fs.existsSync(outputPath)) {
       console.error('Output file not found:', outputPath);
